@@ -7,8 +7,8 @@ import {
   joinVoiceChannel,
   VoiceConnectionStatus,
 } from "@discordjs/voice";
-import { EdgeTTS } from "edge-tts-universal";
 import ffmpegStatic from "ffmpeg-static";
+import { synthesizeTtsAudio } from "./tts-synthesize";
 import { Readable } from "node:stream";
 import type { Guild } from "discord.js";
 
@@ -16,7 +16,6 @@ if (ffmpegStatic) {
   process.env.FFMPEG_PATH = ffmpegStatic;
 }
 
-const DEFAULT_VOICE = "id-ID-GadisNeural";
 const DEFAULT_MAX_CHARS = 400;
 
 type QueueItem = { text: string; voiceChannelId: string };
@@ -29,10 +28,6 @@ type GuildTtsState = {
 };
 
 const guildStates = new Map<string, GuildTtsState>();
-
-function voiceId(): string {
-  return process.env.TTS_VOICE?.trim() || DEFAULT_VOICE;
-}
 
 function maxChars(): number {
   const n = Number(process.env.TTS_MAX_CHARS);
@@ -104,12 +99,6 @@ async function ensureConnection(
   return connection;
 }
 
-async function synthesizeToBuffer(text: string): Promise<Buffer> {
-  const synth = new EdgeTTS(text, voiceId());
-  const result = await synth.synthesize();
-  return Buffer.from(await result.audio.arrayBuffer());
-}
-
 async function drainQueue(guild: Guild) {
   const state = getState(guild.id);
   if (state.processing) return;
@@ -121,7 +110,7 @@ async function drainQueue(guild: Guild) {
       const item = state.queue.shift()!;
       try {
         await ensureConnection(guild, item.voiceChannelId, state);
-        const audio = await synthesizeToBuffer(item.text);
+        const audio = await synthesizeTtsAudio(item.text);
         const resource = createAudioResource(Readable.from(audio));
         state.player.play(resource);
         await entersState(state.player, AudioPlayerStatus.Idle, 300_000);

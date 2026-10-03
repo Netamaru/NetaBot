@@ -18,7 +18,6 @@ if (ffmpegStatic) {
 
 const DEFAULT_VOICE = "id-ID-GadisNeural";
 const DEFAULT_MAX_CHARS = 400;
-const IDLE_DISCONNECT_MS = 60_000;
 
 type QueueItem = { text: string; voiceChannelId: string };
 
@@ -27,7 +26,6 @@ type GuildTtsState = {
   player: ReturnType<typeof createAudioPlayer>;
   voiceChannelId: string | null;
   processing: boolean;
-  idleTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const guildStates = new Map<string, GuildTtsState>();
@@ -49,27 +47,35 @@ function getState(guildId: string): GuildTtsState {
       player: createAudioPlayer(),
       voiceChannelId: null,
       processing: false,
-      idleTimer: null,
     };
     guildStates.set(guildId, state);
   }
   return state;
 }
 
-function clearIdleTimer(state: GuildTtsState) {
-  if (state.idleTimer) {
-    clearTimeout(state.idleTimer);
-    state.idleTimer = null;
-  }
+async function voiceChannelHasHumanMembers(
+  guild: Guild,
+  channelId: string,
+): Promise<boolean> {
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isVoiceBased()) return false;
+  return channel.members.some((m) => !m.user.bot);
 }
 
-function scheduleIdleDisconnect(guildId: string, state: GuildTtsState) {
-  clearIdleTimer(state);
-  state.idleTimer = setTimeout(() => {
-    if (state.queue.length > 0 || state.processing) return;
-    getVoiceConnection(guildId)?.destroy();
-    state.voiceChannelId = null;
-  }, IDLE_DISCONNECT_MS);
+/** Leave VC when queue is idle and no non-bot users remain in the connected channel. */
+export async function maybeLeaveTtsVoiceIfEmpty(guild: Guild): Promise<void> {
+  const state = guildStates.get(guild.id);
+  if (!state?.voiceChannelId) return;
+  if (state.processing || state.queue.length > 0) return;
+
+  const hasHumans = await voiceChannelHasHumanMembers(
+    guild,
+    state.voiceChannelId,
+  );
+  if (hasHumans) return;
+
+  getVoiceConnection(guild.id)?.destroy();
+  state.voiceChannelId = null;
 }
 
 async function ensureConnection(
@@ -109,7 +115,6 @@ async function drainQueue(guild: Guild) {
   if (state.processing) return;
 
   state.processing = true;
-  clearIdleTimer(state);
 
   try {
     while (state.queue.length > 0) {
@@ -129,7 +134,7 @@ async function drainQueue(guild: Guild) {
     if (state.queue.length > 0) {
       void drainQueue(guild);
     } else {
-      scheduleIdleDisconnect(guild.id, state);
+      void maybeLeaveTtsVoiceIfEmpty(guild);
     }
   }
 }

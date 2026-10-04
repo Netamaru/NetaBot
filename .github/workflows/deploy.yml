@@ -1,0 +1,124 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PM2_APP_NAME: NetaBot
+  SSH_TARGET_DIR_DEFAULT: ~/projects/NetaBot
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Notify Discord (Build Started)
+        if: github.event_name != 'pull_request'
+        run: node .github/scripts/discord-notify.mjs started "Build & Test"
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Notify Discord (Build Failed)
+        if: failure()
+        run: node .github/scripts/discord-notify.mjs failure "Build & Test"
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+
+  deploy:
+    name: Deploy to Server via SSH
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute deployment commands over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -e
+
+            for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zprofile"; do
+              [ -f "$rc" ] && . "$rc" 2>/dev/null || true
+            done
+
+            export BUN_INSTALL="$HOME/.bun"
+            export PATH="$BUN_INSTALL/bin:$PATH"
+
+            if [ -z "$SSH_AUTH_SOCK" ]; then
+              eval "$(ssh-agent -s)" 2>/dev/null || true
+              for key in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/id_ecdsa" "$HOME/.ssh/"*github*; do
+                if [ -f "$key" ] && [ "${key%.pub}" = "$key" ]; then
+                  ssh-add "$key" 2>/dev/null || true
+                fi
+              done
+            fi
+
+            export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new"
+
+            cd ${{ secrets.SSH_TARGET_DIR || env.SSH_TARGET_DIR_DEFAULT }}
+
+            echo "Pulling latest changes from main..."
+            git pull origin main
+
+            echo "Installing dependencies..."
+            bun install --frozen-lockfile
+
+            PM2_NAME="${{ env.PM2_APP_NAME }}"
+            echo "Managing PM2 process '$PM2_NAME'..."
+            if pm2 describe "$PM2_NAME" > /dev/null 2>&1; then
+              echo "PM2 process found. Reloading..."
+              pm2 reload "$PM2_NAME" --update-env || pm2 restart "$PM2_NAME" --update-env
+            else
+              echo "PM2 process not found. Starting from ecosystem.config.cjs..."
+              if [ -f "ecosystem.config.cjs" ]; then
+                pm2 start ecosystem.config.cjs
+              else
+                pm2 start "bun run start" --name "$PM2_NAME"
+              fi
+            fi
+
+            pm2 save
+
+            echo "Deployment finished successfully!"
+
+      - name: Notify Discord (Deploy Successful / Done)
+        if: success()
+        run: node .github/scripts/discord-notify.mjs success "Deploy"
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+
+      - name: Notify Discord (Deploy Failed)
+        if: failure()
+        run: node .github/scripts/discord-notify.mjs failure "SSH Deploy"
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}

@@ -21,7 +21,8 @@ function buildFcPpLines(score: RecentScoreDto): string {
     return "";
   }
   const lines: string[] = [];
-  if (score.ppIfFc != null) {
+  // Fruit FC + droplet miss only → show "if 100% FC" (V14 rs.js), not "if FC".
+  if (score.missCount > 0 && score.ppIfFc != null) {
     lines.push(`◈ **${score.ppIfFc}pp** if FC`);
   }
   if (

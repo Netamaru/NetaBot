@@ -1,6 +1,9 @@
 import type { Message } from "discord.js";
 import { fetchTtsEnabled } from "../lib/api3-tts";
-import { sanitizeTextForTts } from "../lib/sanitize-tts-text";
+import {
+  messageIsNonSpeakable,
+  sanitizeMessageForTts,
+} from "../lib/sanitize-tts-text";
 import { enqueueTts } from "../lib/tts-voice-manager";
 
 export async function tryHandleTtsMessage(message: Message): Promise<boolean> {
@@ -14,8 +17,9 @@ export async function tryHandleTtsMessage(message: Message): Promise<boolean> {
     (await message.guild.members.fetch(message.author.id).catch(() => null));
   const voiceChannel = member?.voice.channel;
   if (!voiceChannel) return false;
+  if (messageIsNonSpeakable(message)) return false;
 
-  const text = sanitizeTextForTts(message.content);
+  const text = sanitizeMessageForTts(message);
   if (!text) return false;
 
   enqueueTts(message.guild, voiceChannel.id, text);

@@ -2,6 +2,7 @@ import { Events, type Client, type Message } from "discord.js";
 import { prefixCommands } from "../handlers/commands";
 import { fetchGuildEnabled } from "../lib/api3";
 import { tryOsuBeatmapUrlEmbed } from "./osu-beatmap-url";
+import { tryOsuScoreUrlReply } from "./osu-score-url";
 import { tryHandleTtsMessage } from "./tts-message";
 
 export const name = Events.MessageCreate;
@@ -11,6 +12,7 @@ export async function execute(message: Message) {
 
   try {
     if (await tryOsuBeatmapUrlEmbed(message)) return;
+    if (await tryOsuScoreUrlReply(message)) return;
 
     const enabled = await fetchGuildEnabled(message.guild.id);
     const prefix = enabled.prefix || ";";

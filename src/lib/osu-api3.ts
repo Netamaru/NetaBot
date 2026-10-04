@@ -100,8 +100,11 @@ export type RecentScoreDto = {
   missCount: number;
   dropletMiss: number;
   scoreDisplay: string;
+  scoreValue: number;
   great: number;
   tickHit: number;
+  count50: number;
+  mapLengthSec: number | null;
   endedAt: string;
   endedAtUnix: number;
   coverList: string | null;
@@ -189,6 +192,40 @@ export function fetchUserRecentScore(username: string, index: number) {
   return osuGet<RecentScoreDto>(
     `/api/osu/users/${encodeURIComponent(username)}/recent/${index}`,
   );
+}
+
+export function fetchScoreById(scoreId: string) {
+  return osuGet<RecentScoreDto>(
+    `/api/osu/scores/${encodeURIComponent(scoreId)}`,
+  );
+}
+
+export async function fetchScoreByIdCard(scoreId: string): Promise<Buffer> {
+  const res = await fetch(
+    `${API3_URL}/api/osu/scores/${encodeURIComponent(scoreId)}/card`,
+    { headers: { "x-api-key": API3_KEY } },
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(json?.message || `osu score card ${res.status}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+export async function fetchScoreRankingPanel(scoreId: string): Promise<Buffer> {
+  const res = await fetch(
+    `${API3_URL}/api/osu/scores/${encodeURIComponent(scoreId)}/ranking-panel`,
+    { headers: { "x-api-key": API3_KEY } },
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(json?.message || `osu ranking panel ${res.status}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
 }
 
 function modsQuery(mods: string[]) {
